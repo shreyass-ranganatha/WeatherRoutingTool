@@ -91,6 +91,97 @@ class ConstantFuelBoat(Boat):
         return ship_params
 
 
+class Ship(Boat):
+    # documenting inherited ship parameters
+    speed: float
+    hull_area: float = 7000. * (u.m ** 2)
+
+    def __init__(self, config):
+        super().__init__(config)
+
+        self.wave_data = xr.open_dataset(config.WEATHER_DATA)
+
+        self._fuel_rates_for_mean = []
+
+        if config.SHIP_HULL_AREA is not None:
+            self.hull_area = config.SHIP_HULL_AREA * (u.m ** 2)
+
+    def get_ship_parameters(self, courses, lats, lons, time, speed=None, unique_coords=False):
+        """
+        Calculating fuel_rate with the following formula:
+
+        * power = (wave_resistance + ship_base_resistance) * ship_speed
+        * fuel_rate = power / (42.6e6 * (m²/s²))
+
+        > 42.6e6 is the energy density of marine diesel oil (kg/m²/s²)
+        """
+
+        n_requests = len(courses)
+
+        ## -------------------------
+        time = xr.DataArray(time, dims="points")
+        lats = xr.DataArray(lats, dims="points")
+        lons = xr.DataArray(lons, dims="points")
+
+        # data from the weather_data_temp.nc netCDF file
+        vtotal = self.wave_data["vtotal"].sel( # v-current (m/s)
+            time=time, latitude=lats, longitude=lons, depth=1, method="nearest")
+        utotal = self.wave_data["utotal"].sel( # u-current (m/s)
+            time=time, latitude=lats, longitude=lons, depth=1, method="nearest")
+        wave_height = self.wave_data["VHM0"].sel( # (m)
+            time=time, latitude=lats, longitude=lons, method="nearest")
+        wave_period = self.wave_data["VTPK"].sel( # (s)
+            time=time, latitude=lats, longitude=lons, method="nearest")
+
+        rho = 1025 * u.kg / (u.m ** 3) # seawater density (kg/m³)
+        omega = 2 * np.pi / wave_period # angular frequency (rad/s)
+        Rw = 0.5 * rho * self.hull_area * wave_height ** 2 * omega ** 2  # added wave resistance
+        Rw = Rw.to_numpy() * u.newton  # register as convert to Newton
+
+        ship_base_resistance = Rh = 0.5 * rho * self.hull_area * self.get_boat_speed() ** 2 * 1e-4
+
+        Rt = (ship_base_resistance + Rw)
+        Pe = Rt * self.get_boat_speed() # Watts (J/s)
+        fuel_rate = Pe / (42.6e6 * (u.m ** 2) / (u.s ** 2))  # kg/s
+
+        ## -------------------------
+
+        dummy_array = np.full(n_requests, -99)
+        speed_array = np.full(n_requests, self.get_boat_speed())
+
+        fuel_rate[np.isnan(fuel_rate)] = np.nanmean(fuel_rate)
+        self._fuel_rates_for_mean.append(fuel_rate.mean().value)
+
+        logger.info("Mean Fuel Rate: " + str(np.mean(self._fuel_rates_for_mean)))
+
+        ship_params = ShipParams(
+            fuel_rate=np.array(fuel_rate) * fuel_rate.unit,
+            power=dummy_array * u.Watt,
+            rpm=dummy_array * u.Hz,
+            speed=speed_array * u.meter/u.second,
+            r_wind=dummy_array * u.N,
+            r_calm=dummy_array * u.N,
+            r_waves=dummy_array * u.N,
+            r_shallow=dummy_array * u.N,
+            r_roughness=dummy_array * u.N,
+            wave_height=np.array(wave_height) * u.m,
+            wave_direction=dummy_array * u.radian,
+            wave_period=np.array(wave_period) * u.s,
+            u_currents=np.array(utotal) * u.m / u.s,
+            v_currents=np.array(vtotal) * u.m / u.s,
+            u_wind_speed=dummy_array * u.meter/u.second,
+            v_wind_speed=dummy_array * u.meter/u.second,
+            pressure=dummy_array * u.kg/u.meter/u.second**2,
+            air_temperature=dummy_array * u.deg_C,
+            salinity=dummy_array * u.dimensionless_unscaled,
+            water_temperature=dummy_array * u.deg_C,
+            status=dummy_array,
+            message=np.full(n_requests, "")
+        )
+
+        return ship_params
+
+
 ##
 # Class implementing connection to mariPower package.
 #

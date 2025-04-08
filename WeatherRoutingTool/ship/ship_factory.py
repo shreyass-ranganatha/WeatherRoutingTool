@@ -1,7 +1,7 @@
 import logging
 
 import WeatherRoutingTool.utils.formatting as form
-from WeatherRoutingTool.ship.ship import ConstantFuelBoat, Tanker
+from WeatherRoutingTool.ship.ship import ConstantFuelBoat, Tanker, Ship
 
 logger = logging.getLogger('WRT')
 
@@ -18,6 +18,8 @@ class ShipFactory:
         if config.ALGORITHM_TYPE == 'speedy_isobased':
             ship = ConstantFuelBoat(config)
         else:
+            if config.SHIP_TYPE == "SHIP":
+                ship = Ship(config)
             if config.SHIP_TYPE == 'CBT':
                 ship = Tanker(config)
             if config.SHIP_TYPE == 'SAL':

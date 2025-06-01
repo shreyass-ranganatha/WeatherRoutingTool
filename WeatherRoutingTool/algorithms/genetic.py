@@ -26,6 +26,27 @@ from WeatherRoutingTool.weather import WeatherCond
 
 logger = logging.getLogger('WRT.Genetic')
 
+from pymoo.core.repair import Repair
+
+def repair(a, c):
+    for i, q in enumerate(c):
+        if i == 0:
+            continue
+
+        if q != 0:
+            a[i] = a[i-1]
+
+
+class RepairUnfeasibles(Repair):
+    def _do(self, problem: RoutingProblem, Z, **kw):
+        cs = [problem.get_constraints_without_sum(x[0]) for x in Z]
+
+        for i, c in enumerate(cs):
+            if c.any():
+                repair(Z[i, 0], c)
+
+        return Z
+
 
 class Genetic(RoutingAlg):
     fig: matplotlib.figure
@@ -57,7 +78,8 @@ class Genetic(RoutingAlg):
 
     def execute_routing(self, boat: Boat, wt: WeatherCond, constraints_list: ConstraintsList, verbose=False):
         data = xr.open_dataset(self.weather_path)
-        lat_int, lon_int = 10, 10
+        # step values to reduce resolution of data; essentially break it down into blocks and then find paths by considering the entire block as a point to traverse
+        lat_int, lon_int = 20, 20
         wave_height = data.VHM0.isel(time=0)
         wave_height = wave_height[::lat_int, ::lon_int]
         problem = RoutingProblem(departure_time=self.departure_time, boat=boat, constraint_list=constraints_list)
@@ -144,12 +166,26 @@ class Genetic(RoutingAlg):
 
     def optimize(self, problem, initial_population, crossover, mutation, duplicates):
         # cost[nan_mask] = 20000000000* np.nanmax(cost) if np.nanmax(cost) else 0
-        algorithm = NSGA2(pop_size=self.pop_size, sampling=initial_population, crossover=crossover,
-                          n_offsprings=self.n_offsprings, mutation=mutation, eliminate_duplicates=duplicates,
-                          return_least_infeasible=False)
+        algorithm = NSGA2(
+            pop_size=self.pop_size,
+            sampling=initial_population,
+            crossover=crossover,
+            n_offsprings=self.n_offsprings,
+            mutation=mutation,
+            eliminate_duplicates=duplicates,
+            repair=RepairUnfeasibles(),
+            return_least_infeasible=False, )
+
         termination = get_termination("n_gen", self.ncount)
 
-        res = minimize(problem, algorithm, termination, save_history=True, verbose=True)
+        res = minimize(
+            problem=problem,
+            algorithm=algorithm,
+            termination=termination,
+            save_history=True,
+            verbose=True,
+            return_least_infeasible=True )
+
         # stop = timeit.default_timer()
         # route_cost(res.X)
         return res

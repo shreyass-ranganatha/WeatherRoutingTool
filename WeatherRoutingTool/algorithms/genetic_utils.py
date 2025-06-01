@@ -14,6 +14,7 @@ from pymoo.core.sampling import Sampling
 from skimage.graph import route_through_array
 
 from WeatherRoutingTool.algorithms.data_utils import GridMixin
+from WeatherRoutingTool.constraints.constraints import ConstraintsList
 from WeatherRoutingTool.routeparams import RouteParams
 from WeatherRoutingTool.utils.graphics import plot_genetic_algorithm_initial_population
 
@@ -36,15 +37,34 @@ class GridBasedPopulation(GridMixin, Sampling):
         self.dest = dest
 
     def _do(self, problem, n_samples, **kwargs):
+        """
+        Working:
+        - Generate (n_samples, 1 -> (X, 2)) array
+        - Generate a random cost grid by shuffling self.grid value after imputing with the mean value
+        - Traverse the generated cost value from starting point to the destination point and consider that as an individual sample
+
+        Returns:
+        - np.ndarray: (n_samples, 1: 'object' -> (steps_to_traverse, 2: 'float64'))
+
+        """
+
         routes = np.full((n_samples, 1), None, dtype=object)
         _, _, start_indices = self.coords_to_index([(self.src[0], self.src[1])])
         _, _, end_indices = self.coords_to_index([(self.dest[0], self.dest[1])])
         for i in range(n_samples):
+            # generate random costs by shuffling the grid (wave_data) after imputing it with mean values
             shuffled_cost = self.get_shuffled_cost()
+
+            # get the least costly path from start_indices (starting point) to end_indices (destination point)
             route, _ = route_through_array(shuffled_cost, start_indices[0], end_indices[0],
                                            fully_connected=True, geometric=False)
             # logger.debug(f"GridBasedPopulation._do: type(route)={type(route)}, route={route}")
             _, _, route = self.index_to_coords(route)
+
+            # set the initial point and final point from the given requirement
+            route[0] = self.src
+            route[-1] = self.dest
+
             routes[i][0] = np.array(route)
 
         plot_genetic_algorithm_initial_population(self.src, self.dest, routes)
@@ -245,10 +265,10 @@ class RoutingProblem(ElementwiseProblem):
     constraint_list: None
     departure_time: None
 
-    def __init__(self, departure_time, boat, constraint_list):
+    def __init__(self, departure_time, boat, constraint_list: ConstraintsList):
         super().__init__(n_var=1, n_obj=1, n_constr=1)
         self.boat = boat
-        self.constraint_list = constraint_list
+        self.constraint_list: ConstraintsList = constraint_list
         self.departure_time = departure_time
 
     def _evaluate(self, x, out, *args, **kwargs):
@@ -276,6 +296,9 @@ class RoutingProblem(ElementwiseProblem):
         is_constrained = self.constraint_list.safe_endpoint(lat, lon, time, is_constrained)
         # print(is_constrained)
         return 0 if not is_constrained else 1
+
+    def get_constraints_without_sum(self, route):
+        return np.array([self.is_neg_constraints(lat, lon, None) for lat, lon in route])
 
     def get_constraints(self, route):
         # ToDo: what about time?

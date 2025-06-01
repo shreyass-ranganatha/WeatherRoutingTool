@@ -18,6 +18,8 @@ class ShipFactory:
         if config.ALGORITHM_TYPE == 'speedy_isobased':
             ship = ConstantFuelBoat(config)
         else:
+            if config.SHIP_TYPE == "CFB":
+                ship = ConstantFuelBoat(config)
             if config.SHIP_TYPE == 'CBT':
                 ship = Tanker(config)
             if config.SHIP_TYPE == 'SAL':
